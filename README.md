@@ -1,39 +1,15 @@
-# Telegram Native Rich Table Bot
+# Telegram Native Rich Table Maker
 
-This is a minimal test bot for Telegram's native Rich Messages / Table API.
+Commands:
+- `/newtable` → 2×2 table
+- `/newtable 3 4` → 3×4 table
+- `/help`
 
-## Files
+Buttons let you edit cells, add/delete rows and columns, toggle border/striped/compact, preview and publish.
 
-- `bot.py` — main bot
-- `requirements.txt` — dependency
+Render:
+Build Command: `pip install -r requirements.txt`
+Start Command: `python bot.py`
+Environment variable: `BOT_TOKEN=your BotFather token`
 
-## Environment variable
-
-Set:
-
-BOT_TOKEN=your_bot_token
-
-## Render
-
-Runtime: Python
-
-Build Command:
-pip install -r requirements.txt
-
-Start Command:
-python bot.py
-
-Then open the bot and send:
-
-/table
-
-The bot uses:
-
-POST https://api.telegram.org/bot<TOKEN>/sendRichMessage
-
-with `rich_message.html` containing a real `<table>`.
-
-## Important
-
-This requires a Telegram Bot API version that supports Rich Messages (Bot API 10.1+).
-Telegram added Rich Messages in Bot API 10.1 and `is_compact` for tables in Bot API 10.3.
+Uses Telegram Bot API Rich Messages / `sendRichMessage` and `editMessageText` with `rich_message`. Current Rich Table limit is 20 columns.
