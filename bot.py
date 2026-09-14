@@ -21,10 +21,16 @@ def api(method, payload=None):
 
 
 def esc(x):
-    return html.escape(str(x), quote=False)
+    return html.escape(str(x or ''), quote=False)
 
 
-def table_text(t):
+def parse_cell(cell):
+    if isinstance(cell, dict):
+        return cell.get('text', ''), cell.get('link', '')
+    return str(cell or ''), ''
+
+
+def table_html(t):
     title = t.get('title', '').strip()
     rows = t.get('rows', [])
     bordered = t.get('bordered', True)
@@ -38,11 +44,11 @@ def table_text(t):
     nr = len(rows)
     nc = len(rows[0])
 
-    str_rows = [[str(cell or '') for cell in row] for row in rows]
+    parsed_rows = [[parse_cell(cell) for cell in row] for row in rows]
 
     col_widths = []
     for c in range(nc):
-        w = max(1, max(len(str_rows[r][c]) for r in range(nr)))
+        w = max(1, max(len(parsed_rows[r][c][0]) for r in range(nr)))
         col_widths.append(w)
 
     pad = 1 if compact else 2
@@ -50,23 +56,30 @@ def table_text(t):
 
     lines = []
 
-    def format_cell(val, target_w):
-        val_str = str(val).replace('\r', '').replace('\n', ' ')
-        raw_len = len(val_str)
-        esc_val = html.escape(val_str)
+    def format_cell(text, link, target_w):
+        raw_text = str(text).replace('\r', '').replace('\n', ' ')
+        raw_len = len(raw_text)
+        esc_val = esc(raw_text)
+        if link:
+            cell_content = f'<a href="{esc(link)}">{esc_val}</a>'
+        else:
+            cell_content = esc_val
+
+        # Pad so visually it equals target_w
         esc_len = len(esc_val)
-        return esc_val.ljust(target_w + esc_len - raw_len)
+        padded = cell_content + (' ' * (target_w + esc_len - raw_len - len(esc_val)))
+        return padded
 
     if bordered:
-        top_line = '┌' + '┬'.join('─' * (w + 2 * pad) for w in col_widths) + '┐'
-        head_sep = '├' + '┼'.join('─' * (w + 2 * pad) for w in col_widths) + '┤'
-        row_sep = '├' + '┼'.join('╌' * (w + 2 * pad) for w in col_widths) + '┤' if striped else None
-        bot_line = '└' + '┴'.join('─' * (w + 2 * pad) for w in col_widths) + '┘'
+        top_line = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+'
+        head_sep = '+' + '+'.join('=' * (w + 2 * pad) for w in col_widths) + '+'
+        row_sep = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+' if striped else None
+        bot_line = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+'
 
         lines.append(top_line)
-        for r, row in enumerate(str_rows):
-            cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
-            row_line = '│' + '│'.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs) + '│'
+        for r, row in enumerate(parsed_rows):
+            cell_strs = [format_cell(row[c][0], row[c][1], col_widths[c]) for c in range(nc)]
+            row_line = '|' + '|'.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs) + '|'
             lines.append(row_line)
 
             if r == 0 and nr > 1:
@@ -76,11 +89,11 @@ def table_text(t):
 
         lines.append(bot_line)
     else:
-        head_sep = ' '.join('─' * (w + 2 * pad) for w in col_widths)
-        row_sep = ' '.join('╌' * (w + 2 * pad) for w in col_widths) if striped else None
+        head_sep = ' '.join('=' * (w + 2 * pad) for w in col_widths)
+        row_sep = ' '.join('-' * (w + 2 * pad) for w in col_widths) if striped else None
 
-        for r, row in enumerate(str_rows):
-            cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
+        for r, row in enumerate(parsed_rows):
+            cell_strs = [format_cell(row[c][0], row[c][1], col_widths[c]) for c in range(nc)]
             row_line = ' '.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs)
             lines.append(row_line)
 
@@ -89,10 +102,22 @@ def table_text(t):
             elif r > 0 and r < nr - 1 and row_sep:
                 lines.append(row_sep)
 
-    table_block = f'<pre><code>' + '\n'.join(lines) + '</code></pre>'
+    # Collect links for footer reference if any
+    links_list = []
+    for r, row in enumerate(parsed_rows):
+        for c, (text, link) in enumerate(row):
+            if link:
+                links_list.append(f'• R{r + 1} C{c + 1} ({esc(text) or "Link"}): <a href="{esc(link)}">{esc(link)}</a>')
+
+    table_block = f'<pre>' + '\n'.join(lines) + '</pre>'
+    parts = []
     if title:
-        return f'<b>{esc(title)}</b>\n\n{table_block}'
-    return table_block
+        parts.append(f'<b>{esc(title)}</b>')
+    parts.append(table_block)
+    if links_list:
+        parts.append('<b>Links:</b>\n' + '\n'.join(links_list))
+
+    return '\n\n'.join(parts)
 
 
 def kb(t):
@@ -136,7 +161,7 @@ def editor(chat, uid):
     s = state[uid]
     p = {
         'chat_id': chat,
-        'text': table_text(s['t']),
+        'text': table_html(s['t']),
         'parse_mode': 'HTML',
         'reply_markup': kb(s['t'])
     }
@@ -154,9 +179,9 @@ def editor(chat, uid):
 def init(chat, uid, r=2, c=2):
     r = max(1, min(50, r))
     c = max(1, min(20, c))
-    rows = [['' for _ in range(c)] for _ in range(r)]
+    rows = [[{'text': '', 'link': ''} for _ in range(c)] for _ in range(r)]
     for j in range(c):
-        rows[0][j] = f'Column {j + 1}'
+        rows[0][j] = {'text': f'Column {j + 1}', 'link': ''}
     state[uid] = {
         't': {
             'rows': rows,
@@ -264,12 +289,14 @@ def cb(q):
         parts = d.split(':')
         r, c = int(parts[1]), int(parts[2])
         if 0 <= r < nr and 0 <= c < nc:
-            s['await'] = {'type': 'cell', 'r': r, 'c': c}
+            text, link = parse_cell(rows[r][c])
+            s['await'] = {'type': 'cell_text', 'r': r, 'c': c}
             msg(
                 chat,
                 f'✏️ Editing R{r + 1} C{c + 1}\n'
-                f'Current: <code>{esc(rows[r][c]) or "(empty)"}</code>\n\n'
-                'Send the new text. Use /empty for blank.'
+                f'Current Text: <code>{esc(text) or "(empty)"}</code>\n'
+                f'Current Link: <code>{esc(link) or "(none)"}</code>\n\n'
+                'Step 1/2: Send the new cell text. Use /empty for blank.'
             )
         else:
             msg(chat, '⚠️ Invalid cell selection.')
@@ -285,14 +312,14 @@ def cb(q):
         return
 
     if d == 'ar':
-        rows.append([''] * nc)
+        rows.append([{'text': '', 'link': ''} for _ in range(nc)])
         editor(chat, uid)
         return
 
     if d == 'ac':
         if nc < 20:
             for row in rows:
-                row.append('')
+                row.append({'text': '', 'link': ''})
             editor(chat, uid)
         else:
             msg(chat, '⚠️ Maximum limit of 20 columns reached.')
@@ -341,7 +368,7 @@ def cb(q):
     if d in ('preview', 'pub'):
         p = {
             'chat_id': chat,
-            'text': table_text(t),
+            'text': table_html(t),
             'parse_mode': 'HTML'
         }
         api('sendMessage', p)
@@ -366,8 +393,8 @@ def message(m):
             chat,
             '/newtable — 2×2\n'
             '/newtable 3 4 — 3×4\n\n'
-            'Edit cells, add/delete rows and columns, change border/striped/compact, '
-            'preview and publish.'
+            'Edit cells (text & hyperlink), add/delete rows and columns, '
+            'change border/striped/compact, preview and publish.'
         )
         return
 
@@ -378,15 +405,41 @@ def message(m):
     s = state[uid]
     if s.get('await'):
         await_info = s['await']
-        if await_info.get('type') == 'title':
+        await_type = await_info.get('type')
+
+        if await_type == 'title':
             s['t']['title'] = '' if text == '/empty' else text
             s['await'] = None
             msg(chat, '✅ Title updated.')
             editor(chat, uid)
-        else:
+        elif await_type == 'cell_text':
             r, c = await_info['r'], await_info['c']
             if 0 <= r < len(s['t']['rows']) and 0 <= c < len(s['t']['rows'][0]):
-                s['t']['rows'][r][c] = '' if text == '/empty' else text
+                cell_text = '' if text == '/empty' else text
+                s['await'] = {'type': 'cell_link', 'r': r, 'c': c, 'text': cell_text}
+                _, current_link = parse_cell(s['t']['rows'][r][c])
+                msg(
+                    chat,
+                    f'🔗 Step 2/2: Send the URL link for R{r + 1} C{c + 1} (e.g., https://t.me/...)\n'
+                    f'Current Link: <code>{esc(current_link) or "(none)"}</code>\n\n'
+                    'Use /skip to keep/leave no link, or /empty to clear.'
+                )
+            else:
+                s['await'] = None
+                msg(chat, '⚠️ Selected cell is no longer valid.')
+                editor(chat, uid)
+        elif await_type == 'cell_link':
+            r, c = await_info['r'], await_info['c']
+            cell_text = await_info['text']
+            if 0 <= r < len(s['t']['rows']) and 0 <= c < len(s['t']['rows'][0]):
+                _, old_link = parse_cell(s['t']['rows'][r][c])
+                if text == '/skip':
+                    link = old_link
+                elif text == '/empty':
+                    link = ''
+                else:
+                    link = text
+                s['t']['rows'][r][c] = {'text': cell_text, 'link': link}
                 s['await'] = None
                 msg(chat, '✅ Cell updated.')
                 editor(chat, uid)
