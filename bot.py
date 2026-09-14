@@ -24,22 +24,75 @@ def esc(x):
     return html.escape(str(x), quote=False)
 
 
-def table_html(t):
-    attrs = []
-    if t['bordered']:
-        attrs.append('bordered')
-    if t['striped']:
-        attrs.append('striped')
-    if t['compact']:
-        attrs.append('compact')
-    a = (' ' + ' '.join(attrs)) if attrs else ''
-    s = (f"<h3>{esc(t['title'])}</h3>" if t['title'] else '') + f'<table{a}>'
-    for r, row in enumerate(t['rows']):
-        tag = 'th' if r == 0 else 'td'
-        s += '<tr>' + ''.join(
-            f'<{tag}>{esc(v) or "&nbsp;"}</{tag}>' for v in row
-        ) + '</tr>'
-    return s + '</table>'
+def table_text(t):
+    title = t.get('title', '').strip()
+    rows = t.get('rows', [])
+    bordered = t.get('bordered', True)
+    striped = t.get('striped', False)
+    compact = t.get('compact', True)
+
+    if not rows or not rows[0]:
+        body = '<i>(Empty table)</i>'
+        return f'<b>{esc(title)}</b>\n\n{body}' if title else body
+
+    nr = len(rows)
+    nc = len(rows[0])
+
+    str_rows = [[str(cell or '') for cell in row] for row in rows]
+
+    col_widths = []
+    for c in range(nc):
+        w = max(1, max(len(str_rows[r][c]) for r in range(nr)))
+        col_widths.append(w)
+
+    pad = 1 if compact else 2
+    pad_str = ' ' * pad
+
+    lines = []
+
+    def format_cell(val, target_w):
+        val_str = str(val).replace('\r', '').replace('\n', ' ')
+        raw_len = len(val_str)
+        esc_val = html.escape(val_str)
+        esc_len = len(esc_val)
+        return esc_val.ljust(target_w + esc_len - raw_len)
+
+    if bordered:
+        top_line = '┌' + '┬'.join('─' * (w + 2 * pad) for w in col_widths) + '┐'
+        head_sep = '├' + '┼'.join('─' * (w + 2 * pad) for w in col_widths) + '┤'
+        row_sep = '├' + '┼'.join('╌' * (w + 2 * pad) for w in col_widths) + '┤' if striped else None
+        bot_line = '└' + '┴'.join('─' * (w + 2 * pad) for w in col_widths) + '┘'
+
+        lines.append(top_line)
+        for r, row in enumerate(str_rows):
+            cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
+            row_line = '│' + '│'.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs) + '│'
+            lines.append(row_line)
+
+            if r == 0 and nr > 1:
+                lines.append(head_sep)
+            elif r > 0 and r < nr - 1 and row_sep:
+                lines.append(row_sep)
+
+        lines.append(bot_line)
+    else:
+        head_sep = ' '.join('─' * (w + 2 * pad) for w in col_widths)
+        row_sep = ' '.join('╌' * (w + 2 * pad) for w in col_widths) if striped else None
+
+        for r, row in enumerate(str_rows):
+            cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
+            row_line = ' '.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs)
+            lines.append(row_line)
+
+            if r == 0 and nr > 1:
+                lines.append(head_sep)
+            elif r > 0 and r < nr - 1 and row_sep:
+                lines.append(row_sep)
+
+    table_block = f'<pre><code>' + '\n'.join(lines) + '</code></pre>'
+    if title:
+        return f'<b>{esc(title)}</b>\n\n{table_block}'
+    return table_block
 
 
 def kb(t):
@@ -57,16 +110,25 @@ def kb(t):
             {'text': '⚙️ Settings', 'callback_data': 'set'}
         ],
         [
-            {'text': '👀 Preview', 'callback_data': 'preview'},
+            {'text': '✏️ Edit Title', 'callback_data': 'edittitle'},
             {'text': '🚀 Publish', 'callback_data': 'pub'}
         ]
     ]}
 
 
 def msg(chat, text, markup=None):
-    p = {'chat_id': chat, 'text': text}
+    p = {
+        'chat_id': chat,
+        'text': text,
+        'parse_mode': 'HTML'
+    }
     if markup:
-        p['reply_markup'] = {'inline_keyboard': markup}
+        if isinstance(markup, dict) and 'inline_keyboard' in markup:
+            p['reply_markup'] = markup
+        elif isinstance(markup, list):
+            p['reply_markup'] = {'inline_keyboard': markup}
+        else:
+            p['reply_markup'] = markup
     return api('sendMessage', p)
 
 
@@ -74,7 +136,8 @@ def editor(chat, uid):
     s = state[uid]
     p = {
         'chat_id': chat,
-        'rich_message': {'html': table_html(s['t']), 'is_rtl': False},
+        'text': table_text(s['t']),
+        'parse_mode': 'HTML',
         'reply_markup': kb(s['t'])
     }
     mid = s.get('mid')
@@ -84,7 +147,7 @@ def editor(chat, uid):
             return
         except Exception:
             pass
-    m = api('sendRichMessage', p)
+    m = api('sendMessage', p)
     s['mid'] = m['message_id']
 
 
@@ -140,12 +203,33 @@ def pick(prefix, n, label):
 
 
 def edit_text(chat, mid, text, keyboard):
-    api('editMessageText', {
+    p = {
         'chat_id': chat,
         'message_id': mid,
         'text': text,
-        'reply_markup': {'inline_keyboard': keyboard}
-    })
+        'parse_mode': 'HTML'
+    }
+    if keyboard:
+        if isinstance(keyboard, dict) and 'inline_keyboard' in keyboard:
+            p['reply_markup'] = keyboard
+        elif isinstance(keyboard, list):
+            p['reply_markup'] = {'inline_keyboard': keyboard}
+        else:
+            p['reply_markup'] = keyboard
+    return api('editMessageText', p)
+
+
+def settings_kb(t):
+    return [
+        [
+            {'text': f"Border: {'ON' if t['bordered'] else 'OFF'}", 'callback_data': 'tb'},
+            {'text': f"Striped: {'ON' if t['striped'] else 'OFF'}", 'callback_data': 'ts'}
+        ],
+        [
+            {'text': f"Compact: {'ON' if t['compact'] else 'OFF'}", 'callback_data': 'tc'}
+        ],
+        [{'text': '↩️ Back', 'callback_data': 'back'}]
+    ]
 
 
 def cb(q):
@@ -153,7 +237,10 @@ def cb(q):
     uid = q['from']['id']
     mid = q['message']['message_id']
     d = q.get('data', '')
-    api('answerCallbackQuery', {'callback_query_id': q['id']})
+    try:
+        api('answerCallbackQuery', {'callback_query_id': q['id']})
+    except Exception:
+        pass
 
     if uid not in state:
         init(chat, uid)
@@ -162,7 +249,7 @@ def cb(q):
     t = s['t']
     rows = t['rows']
     nr = len(rows)
-    nc = len(rows[0])
+    nc = len(rows[0]) if rows else 0
 
     if d == 'back':
         s['await'] = None
@@ -174,14 +261,26 @@ def cb(q):
         return
 
     if d.startswith('cell:'):
-        _, r, c = d.split(':')
-        r, c = int(r), int(c)
-        s['await'] = {'r': r, 'c': c}
+        parts = d.split(':')
+        r, c = int(parts[1]), int(parts[2])
+        if 0 <= r < nr and 0 <= c < nc:
+            s['await'] = {'type': 'cell', 'r': r, 'c': c}
+            msg(
+                chat,
+                f'✏️ Editing R{r + 1} C{c + 1}\n'
+                f'Current: <code>{esc(rows[r][c]) or "(empty)"}</code>\n\n'
+                'Send the new text. Use /empty for blank.'
+            )
+        else:
+            msg(chat, '⚠️ Invalid cell selection.')
+        return
+
+    if d == 'edittitle':
+        s['await'] = {'type': 'title'}
         msg(
             chat,
-            f'✏️ Editing R{r + 1} C{c + 1}\n'
-            f'Current: <code>{esc(rows[r][c]) or "(empty)"}</code>\n\n'
-            'Send the new text. Use /empty for blank.'
+            f'✏️ Current Title: <code>{esc(t["title"]) or "(none)"}</code>\n\n'
+            'Send the new title text. Use /empty to remove the title.'
         )
         return
 
@@ -191,9 +290,12 @@ def cb(q):
         return
 
     if d == 'ac':
-        for row in rows:
-            row.append('')
-        editor(chat, uid)
+        if nc < 20:
+            for row in rows:
+                row.append('')
+            editor(chat, uid)
+        else:
+            msg(chat, '⚠️ Maximum limit of 20 columns reached.')
         return
 
     if d == 'dr':
@@ -204,7 +306,9 @@ def cb(q):
         return
 
     if d.startswith('xrow:'):
-        rows.pop(int(d.split(':')[1]))
+        idx = int(d.split(':')[1])
+        if 0 <= idx < len(rows) and len(rows) > 1:
+            rows.pop(idx)
         editor(chat, uid)
         return
 
@@ -216,36 +320,31 @@ def cb(q):
         return
 
     if d.startswith('xcol:'):
-        c = int(d.split(':')[1])
-        for row in rows:
-            row.pop(c)
+        idx = int(d.split(':')[1])
+        if nc > 1 and 0 <= idx < nc:
+            for row in rows:
+                if idx < len(row):
+                    row.pop(idx)
         editor(chat, uid)
         return
 
     if d == 'set':
-        k = [
-            [
-                {'text': f"Border: {'ON' if t['bordered'] else 'OFF'}", 'callback_data': 'tb'},
-                {'text': f"Striped: {'ON' if t['striped'] else 'OFF'}", 'callback_data': 'ts'}
-            ],
-            [
-                {'text': f"Compact: {'ON' if t['compact'] else 'OFF'}", 'callback_data': 'tc'}
-            ],
-            [{'text': '↩️ Back', 'callback_data': 'back'}]
-        ]
-        edit_text(chat, mid, '⚙️ <b>Table settings</b>', k)
+        edit_text(chat, mid, '⚙️ <b>Table settings</b>', settings_kb(t))
         return
 
     if d in ('tb', 'ts', 'tc'):
-        t[{'tb': 'bordered', 'ts': 'striped', 'tc': 'compact'}[d]] ^= True
-        editor(chat, uid)
+        key = {'tb': 'bordered', 'ts': 'striped', 'tc': 'compact'}[d]
+        t[key] = not t[key]
+        edit_text(chat, mid, '⚙️ <b>Table settings</b>', settings_kb(t))
         return
 
     if d in ('preview', 'pub'):
-        api('sendRichMessage', {
+        p = {
             'chat_id': chat,
-            'rich_message': {'html': table_html(t), 'is_rtl': False}
-        })
+            'text': table_text(t),
+            'parse_mode': 'HTML'
+        }
+        api('sendMessage', p)
         return
 
 
@@ -278,11 +377,23 @@ def message(m):
 
     s = state[uid]
     if s.get('await'):
-        r, c = s['await']['r'], s['await']['c']
-        s['t']['rows'][r][c] = '' if text == '/empty' else text
-        s['await'] = None
-        msg(chat, '✅ Cell updated.')
-        editor(chat, uid)
+        await_info = s['await']
+        if await_info.get('type') == 'title':
+            s['t']['title'] = '' if text == '/empty' else text
+            s['await'] = None
+            msg(chat, '✅ Title updated.')
+            editor(chat, uid)
+        else:
+            r, c = await_info['r'], await_info['c']
+            if 0 <= r < len(s['t']['rows']) and 0 <= c < len(s['t']['rows'][0]):
+                s['t']['rows'][r][c] = '' if text == '/empty' else text
+                s['await'] = None
+                msg(chat, '✅ Cell updated.')
+                editor(chat, uid)
+            else:
+                s['await'] = None
+                msg(chat, '⚠️ Selected cell is no longer valid.')
+                editor(chat, uid)
     else:
         msg(chat, 'Use the buttons under the table.')
 
