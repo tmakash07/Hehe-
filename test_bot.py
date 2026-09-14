@@ -18,9 +18,9 @@ def test_table_text_basic():
     res = bot.table_text(t)
     assert '<b>Test Table</b>' in res
     assert '<pre><code>' in res
-    assert '┌───────┬───────┐' in res
-    assert '│ Col 1 │ Col 2 │' in res
-    assert '└───────┴───────┘' in res
+    assert '+-------+-------+' in res
+    assert '| Col 1 | Col 2 |' in res
+    assert '+=======+=======+' in res
 
 
 def test_table_text_options():
@@ -32,9 +32,9 @@ def test_table_text_options():
         'compact': False
     }
     res = bot.table_text(t_unbordered)
-    assert '┌' not in res
+    assert '+' not in res
     assert 'Col 1' in res
-    assert '╌' in res
+    assert '-' in res
 
 
 def test_table_text_escaping():

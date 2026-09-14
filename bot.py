@@ -58,15 +58,15 @@ def table_text(t):
         return esc_val.ljust(target_w + esc_len - raw_len)
 
     if bordered:
-        top_line = '┌' + '┬'.join('─' * (w + 2 * pad) for w in col_widths) + '┐'
-        head_sep = '├' + '┼'.join('─' * (w + 2 * pad) for w in col_widths) + '┤'
-        row_sep = '├' + '┼'.join('╌' * (w + 2 * pad) for w in col_widths) + '┤' if striped else None
-        bot_line = '└' + '┴'.join('─' * (w + 2 * pad) for w in col_widths) + '┘'
+        top_line = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+'
+        head_sep = '+' + '+'.join('=' * (w + 2 * pad) for w in col_widths) + '+'
+        row_sep = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+' if striped else None
+        bot_line = '+' + '+'.join('-' * (w + 2 * pad) for w in col_widths) + '+'
 
         lines.append(top_line)
         for r, row in enumerate(str_rows):
             cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
-            row_line = '│' + '│'.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs) + '│'
+            row_line = '|' + '|'.join(f'{pad_str}{cs}{pad_str}' for cs in cell_strs) + '|'
             lines.append(row_line)
 
             if r == 0 and nr > 1:
@@ -76,8 +76,8 @@ def table_text(t):
 
         lines.append(bot_line)
     else:
-        head_sep = ' '.join('─' * (w + 2 * pad) for w in col_widths)
-        row_sep = ' '.join('╌' * (w + 2 * pad) for w in col_widths) if striped else None
+        head_sep = ' '.join('=' * (w + 2 * pad) for w in col_widths)
+        row_sep = ' '.join('-' * (w + 2 * pad) for w in col_widths) if striped else None
 
         for r, row in enumerate(str_rows):
             cell_strs = [format_cell(row[c], col_widths[c]) for c in range(nc)]
